@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 import "@chainlink/contracts/src/v0.8/ChainlinkClient.sol";
 import "@chainlink/contracts/src/v0.8/ConfirmedOwner.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract GeneralConsumer is ChainlinkClient, ConfirmedOwner, AccessControl {
     using Chainlink for Chainlink.Request;
@@ -23,6 +24,10 @@ contract GeneralConsumer is ChainlinkClient, ConfirmedOwner, AccessControl {
 
     // Last requestID value
     bytes32 public lastRequestId;
+    mapping(address => bytes32[]) public requestsTracking;
+
+    // Link contract instance
+    ERC20 private linkContractInstance;
 
     // Access control
     bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
@@ -38,13 +43,20 @@ contract GeneralConsumer is ChainlinkClient, ConfirmedOwner, AccessControl {
 
     constructor(address _link) ConfirmedOwner(msg.sender) {
         if (_link == address(0)) {
-            setPublicChainlinkToken();
+            revert("You need to set a valid LINK token address");
         } else {
             setChainlinkToken(_link);
+            linkContractInstance = ERC20(_link);
         }
         // Access control management
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(MANAGER_ROLE, msg.sender);
+    }
+
+    function payServiceFee() private {
+
+        require(linkContractInstance.allowance(msg.sender, address(this)) >= oraclePayment, "You need to allow the contract to spent LINK tokens");
+        linkContractInstance.transferFrom(msg.sender, address(this), oraclePayment/2);
     }
 
     function requestValue(
@@ -53,13 +65,18 @@ contract GeneralConsumer is ChainlinkClient, ConfirmedOwner, AccessControl {
         uint256 resultType,
         string[] memory requestParamNames,
         string[] memory requestParamValues
-    ) public {
+    ) public returns(bytes32) {
         require(requestParamNames.length == requestParamValues.length, "Parameters and values amounts don't match");
 
         uint256 paramsLength = requestParamNames.length;
 
+        // Pay service fee to the smart contract
+        payServiceFee();
+
+        // Create request for the oracle
         Chainlink.Request memory req;
 
+        // Switch between the request types and send the request
         if (resultType == UINT_REQUEST_TYPE) {
             req = buildChainlinkRequest(
                 stringToBytes32(_jobId), // JobID for the function on the Chainlink node operator
@@ -85,7 +102,9 @@ contract GeneralConsumer is ChainlinkClient, ConfirmedOwner, AccessControl {
             req.add(requestParamNames[i], requestParamValues[i]);
         }
 
-        sendChainlinkRequestTo(_oracle, req, oraclePayment);
+        sendChainlinkRequestTo(_oracle, req, oraclePayment/2);
+        requestsTracking[msg.sender].push(req.id);  // Add requestId to the list of the past requests
+        return req.id;
     }
 
     function fullfillStringRequest(bytes32 requestId, string memory requestResult) public recordChainlinkFulfillment(requestId) {
@@ -108,6 +127,11 @@ contract GeneralConsumer is ChainlinkClient, ConfirmedOwner, AccessControl {
 
     function getChainlinkToken() public view returns (address) {
         return chainlinkTokenAddress();
+    }
+
+    function getTotalRequestsAmountPerUser(address userAddress) public view returns(uint256) {
+
+        return requestsTracking[userAddress].length;
     }
 
     function withdrawLink() public onlyRole(MANAGER_ROLE) {
