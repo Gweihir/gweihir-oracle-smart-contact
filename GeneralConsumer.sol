@@ -39,10 +39,6 @@ contract GeneralConsumer is ChainlinkClient, ConfirmedOwner, AccessControl {
     event RequestStringValueFulfilled(bytes32 indexed _requestId, string indexed _requestResult);
     event RequestBoolValueFulfilled(bytes32 indexed _requestId, bool indexed _requestResult);
 
-    event RequestKusamaAccountBalanceFulfilled(bytes32 indexed requestId, uint256 indexed freePlank);
-
-    uint256 public currentAccountBalance;
-
     constructor(address _link) ConfirmedOwner(msg.sender) {
         if (_link == address(0)) {
             revert("You need to set a valid LINK token address");
@@ -56,7 +52,6 @@ contract GeneralConsumer is ChainlinkClient, ConfirmedOwner, AccessControl {
     }
 
     function payServiceFee() private {
-
         require(linkContractInstance.allowance(msg.sender, address(this)) >= oraclePayment, "You need to allow the contract to spent LINK tokens");
         linkContractInstance.transferFrom(msg.sender, address(this), oraclePayment);
     }
