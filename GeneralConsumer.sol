@@ -25,6 +25,8 @@ contract GeneralConsumer is ChainlinkClient, ConfirmedOwner, AccessControl {
     // Last requestID value
     bytes32 public lastRequestId;
     mapping(address => bytes32[]) public requestsTracking;
+    mapping(bytes32 => string[]) private requestParamentersNames;
+    mapping(bytes32 => string[]) private requestParametersValues;
 
     // Link contract instance
     ERC20 private linkContractInstance;
@@ -56,7 +58,7 @@ contract GeneralConsumer is ChainlinkClient, ConfirmedOwner, AccessControl {
     function payServiceFee() private {
 
         require(linkContractInstance.allowance(msg.sender, address(this)) >= oraclePayment, "You need to allow the contract to spent LINK tokens");
-        linkContractInstance.transferFrom(msg.sender, address(this), oraclePayment/2);
+        linkContractInstance.transferFrom(msg.sender, address(this), oraclePayment);
     }
 
     function requestValue(
@@ -102,9 +104,11 @@ contract GeneralConsumer is ChainlinkClient, ConfirmedOwner, AccessControl {
             req.add(requestParamNames[i], requestParamValues[i]);
         }
 
-        sendChainlinkRequestTo(_oracle, req, oraclePayment/2);
-        requestsTracking[msg.sender].push(req.id);  // Add requestId to the list of the past requests
-        return req.id;
+        bytes32 requestId = sendChainlinkRequestTo(_oracle, req, oraclePayment);
+        requestsTracking[msg.sender].push(requestId);  // Add requestId to the list of the past requests
+        requestParamentersNames[requestId] = requestParamNames; // Add params names for UI semplification
+        requestParametersValues[requestId] = requestParamValues; // Add params values for UI semplification
+        return requestId;
     }
 
     function fullfillStringRequest(bytes32 requestId, string memory requestResult) public recordChainlinkFulfillment(requestId) {
@@ -129,16 +133,6 @@ contract GeneralConsumer is ChainlinkClient, ConfirmedOwner, AccessControl {
         return chainlinkTokenAddress();
     }
 
-    function getTotalRequestsAmountPerUser(address userAddress) public view returns(uint256) {
-
-        return requestsTracking[userAddress].length;
-    }
-
-    function withdrawLink() public onlyRole(MANAGER_ROLE) {
-        LinkTokenInterface link = LinkTokenInterface(chainlinkTokenAddress());
-        require(link.transfer(msg.sender, link.balanceOf(address(this))), "Unable to transfer");
-    }
-
     function cancelRequest(
         bytes32 _requestId,
         uint256 _payment,
@@ -160,7 +154,8 @@ contract GeneralConsumer is ChainlinkClient, ConfirmedOwner, AccessControl {
         }
     }
 
-    // Retrieve result functions
+    // Retrieve result functions -->
+
     function getUintRequestResult(bytes32 requestId) external view returns (uint256) {
         return uintRequestResults[requestId];
     }
@@ -173,9 +168,24 @@ contract GeneralConsumer is ChainlinkClient, ConfirmedOwner, AccessControl {
         return boolRequestResults[requestId];
     }
 
-    function updateOraclePayment(uint256 newPricePerRequest) external {
-        oraclePayment = newPricePerRequest;
+    function getRequestParametersNames(bytes32 requestId) external view returns(string[] memory) {
+        return requestParamentersNames[requestId];
     }
+
+    function getRequestParameterValues(bytes32 requestId) external view returns(string[] memory) {
+        return requestParametersValues[requestId];
+    }
+
+    function getTotalRequestsAmountPerUser(address userAddress) public view returns(uint256) {
+
+        return requestsTracking[userAddress].length;
+    }
+
+    function getUserRequestsList(address userAddress) public view returns(bytes32[] memory) {
+        return requestsTracking[userAddress];
+    }
+
+    // Permission management -->
 
     function addContractManagerRole(address newManagerAddress) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _grantRole(MANAGER_ROLE, newManagerAddress);
@@ -183,5 +193,16 @@ contract GeneralConsumer is ChainlinkClient, ConfirmedOwner, AccessControl {
 
     function revokeContractManagerRole(address oldManagerAddress) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _revokeRole(MANAGER_ROLE, oldManagerAddress);
+    }
+
+    // Funding management --> 
+
+    function updateOraclePayment(uint256 newPricePerRequest) external onlyRole(MANAGER_ROLE) {
+        oraclePayment = newPricePerRequest;
+    }
+
+    function withdrawLink() public onlyRole(MANAGER_ROLE) {
+        LinkTokenInterface link = LinkTokenInterface(chainlinkTokenAddress());
+        require(link.transfer(msg.sender, link.balanceOf(address(this))), "Unable to transfer");
     }
 }
